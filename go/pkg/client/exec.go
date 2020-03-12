@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	logging "log"
 	"sort"
 	"time"
 
@@ -233,8 +234,10 @@ func (c *Client) ExecuteAndWait(ctx context.Context, req *repb.ExecuteRequest) (
 		var res regrpc.Execution_ExecuteClient
 		// In both cases, use the lower-level methods to avoid retrying twice.
 		if wait {
+			logging.Printf("WaitExecution")
 			res, e = c.execution.WaitExecution(ctx, &repb.WaitExecutionRequest{Name: lastOp.Name}, opts...)
 		} else {
+			logging.Printf("Execute")
 			res, e = c.execution.Execute(ctx, req, opts...)
 		}
 		if e != nil {
@@ -242,6 +245,7 @@ func (c *Client) ExecuteAndWait(ctx context.Context, req *repb.ExecuteRequest) (
 		}
 		for {
 			op, e := res.Recv()
+			logging.Printf("here %s %s", op, e)
 			if e == io.EOF {
 				break
 			}
