@@ -275,10 +275,7 @@ func Dial(ctx context.Context, endpoint string, params DialParams) (*grpc.Client
 		tlsCreds := credentials.NewClientTLSFromCert(nil, "")
 		opts = append(opts, grpc.WithTransportCredentials(tlsCreds))
 	}
-	grpcInt := createGRPCInterceptor()
 	opts = append(opts, grpc.WithBalancerName(balancer.Name))
-	opts = append(opts, grpc.WithUnaryInterceptor(grpcInt.GCPUnaryClientInterceptor))
-	opts = append(opts, grpc.WithStreamInterceptor(grpcInt.GCPStreamClientInterceptor))
 
 	conn, err := grpc.Dial(endpoint, opts...)
 	if err != nil {
