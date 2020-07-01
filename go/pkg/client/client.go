@@ -275,13 +275,32 @@ func Dial(ctx context.Context, endpoint string, params DialParams) (*grpc.Client
 		tlsCreds := credentials.NewClientTLSFromCert(nil, "")
 		opts = append(opts, grpc.WithTransportCredentials(tlsCreds))
 	}
+	grpcInt := createGRPCInterceptor()
 	opts = append(opts, grpc.WithBalancerName(balancer.Name))
+	opts = append(opts, grpc.WithChainUnaryInterceptor(grpcInt.GCPUnaryClientInterceptor, unaryLogger))
+	opts = append(opts, grpc.WithChainStreamInterceptor(grpcInt.GCPStreamClientInterceptor, streamLogger))
 
 	conn, err := grpc.Dial(endpoint, opts...)
 	if err != nil {
 		return nil, fmt.Errorf("couldn't dial gRPC %q: %v", endpoint, err)
 	}
 	return conn, nil
+}
+
+func unaryLogger(ctx context.Context, method string, req, reply interface{}, cc *grpc.ClientConn, invoker grpc.UnaryInvoker, opts ...grpc.CallOption) error {
+	err := invoker(ctx, method, req, reply, cc, opts...)
+	if err != nil && status.Code(err) != codes.NotFound {
+		log.Error("RPC %s failed: %s", method, err)
+	}
+	return err
+}
+
+func streamLogger(ctx context.Context, desc *grpc.StreamDesc, cc *grpc.ClientConn, method string, streamer grpc.Streamer, opts ...grpc.CallOption) (grpc.ClientStream, error) {
+	stream, err := streamer(ctx, desc, cc, method, opts...)
+	if err != nil && status.Code(err) != codes.NotFound {
+		log.Error("RPC %s failed: %s", method, err)
+	}
+	return stream, err
 }
 
 // DialRaw dials a remote execution service and returns the grpc connection that is established.
@@ -410,7 +429,7 @@ func RetryTransient() *Retrier {
 			}
 			switch s.Code() {
 			case codes.Canceled, codes.Unknown, codes.DeadlineExceeded, codes.Aborted,
-				codes.Unavailable, codes.Unauthenticated, codes.ResourceExhausted:
+				codes.Internal, codes.Unavailable, codes.Unauthenticated, codes.ResourceExhausted:
 				return true
 			default:
 				return false
