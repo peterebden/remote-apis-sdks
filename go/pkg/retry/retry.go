@@ -9,6 +9,7 @@ import (
 	"context"
 	"fmt"
 	"math/rand"
+	"os"
 	"sync"
 	"time"
 
@@ -89,6 +90,8 @@ func WithPolicy(ctx context.Context, shouldRetry ShouldRetry, bp BackoffPolicy, 
 			}
 			return errors.Wrapf(err, "retry budget exhausted (%d attempts)", bp.maxAttempts)
 		}
+
+		fmt.Fprintf(os.Stderr, "call failed: %s, retrying after %s\n", err, backoff(bp.baseDelay, bp.maxDelay, attempts))
 
 		select {
 		case <-ctx.Done():
