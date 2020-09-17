@@ -51,10 +51,10 @@ type InputExclusion struct {
 	Type InputType
 }
 
-// VirtualInput represents an input that does not actually exist as a file on disk, but we want
-// to stage it as a file on disk for the command execution.
+// VirtualInput represents an input that does not actually exist on disk, but we want
+// to stage it on disk for the command execution.
 type VirtualInput struct {
-	// The path for the input file to be staged at, relative to the ExecRoot.
+	// The path for the input to be staged at, relative to the ExecRoot.
 	Path string
 
 	// The byte contents of the file to be staged.
@@ -443,6 +443,8 @@ type Metadata struct {
 	TotalOutputBytes int64
 	// Output digests.
 	OutputDigests map[string]digest.Digest
+	// Missing digests that are uploaded to CAS.
+	MissingDigests []digest.Digest
 	// TODO(olaola): Add a lot of other fields.
 }
 
@@ -503,8 +505,20 @@ func inputSpecFromProto(is *cpb.InputSpec) *InputSpec {
 			Type:  inputTypeFromProto(ex.Type),
 		})
 	}
+	var vis []*VirtualInput
+	for _, vi := range is.GetVirtualInputs() {
+		contents := make([]byte, len(vi.Contents))
+		copy(contents, vi.Contents)
+		vis = append(vis, &VirtualInput{
+			Path:             vi.Path,
+			Contents:         contents,
+			IsExecutable:     vi.IsExecutable,
+			IsEmptyDirectory: vi.IsEmptyDirectory,
+		})
+	}
 	return &InputSpec{
 		Inputs:               is.GetInputs(),
+		VirtualInputs:        vis,
 		InputExclusions:      excl,
 		EnvironmentVariables: is.GetEnvironmentVariables(),
 	}
@@ -518,8 +532,20 @@ func inputSpecToProto(is *InputSpec) *cpb.InputSpec {
 			Type:  inputTypeToProto(ex.Type),
 		})
 	}
+	var vis []*cpb.VirtualInput
+	for _, vi := range is.VirtualInputs {
+		contents := make([]byte, len(vi.Contents))
+		copy(contents, vi.Contents)
+		vis = append(vis, &cpb.VirtualInput{
+			Path:             vi.Path,
+			Contents:         contents,
+			IsExecutable:     vi.IsExecutable,
+			IsEmptyDirectory: vi.IsEmptyDirectory,
+		})
+	}
 	return &cpb.InputSpec{
 		Inputs:               is.Inputs,
+		VirtualInputs:        vis,
 		ExcludeInputs:        excl,
 		EnvironmentVariables: is.EnvironmentVariables,
 	}

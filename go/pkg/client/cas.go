@@ -13,6 +13,7 @@ import (
 
 	"github.com/bazelbuild/remote-apis-sdks/go/pkg/chunker"
 	"github.com/bazelbuild/remote-apis-sdks/go/pkg/digest"
+	"github.com/bazelbuild/remote-apis-sdks/go/pkg/filemetadata"
 	"github.com/bazelbuild/remote-apis-sdks/go/pkg/tree"
 	"github.com/golang/protobuf/proto"
 	"github.com/pborman/uuid"
@@ -26,9 +27,10 @@ import (
 
 // UploadIfMissing stores a number of uploadable items.
 // It first queries the CAS to see which items are missing and only uploads those that are.
-func (c *Client) UploadIfMissing(ctx context.Context, data ...*chunker.Chunker) error {
+// Returns a slice of the missing digests.
+func (c *Client) UploadIfMissing(ctx context.Context, data ...*chunker.Chunker) ([]digest.Digest, error) {
 	if cap(c.casUploaders) <= 0 {
-		return fmt.Errorf("CASConcurrency should be at least 1")
+		return nil, fmt.Errorf("CASConcurrency should be at least 1")
 	}
 	const (
 		logInterval = 25
@@ -46,7 +48,7 @@ func (c *Client) UploadIfMissing(ctx context.Context, data ...*chunker.Chunker) 
 
 	missing, err := c.MissingBlobs(ctx, dgs)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	log.V(2).Infof("%d items to store", len(missing))
 	var batches [][]digest.Digest
@@ -100,7 +102,8 @@ func (c *Client) UploadIfMissing(ctx context.Context, data ...*chunker.Chunker) 
 	log.V(2).Info("Waiting for remaining jobs")
 	err = eg.Wait()
 	log.V(2).Info("Done")
-	return err
+
+	return missing, err
 }
 
 // WriteBlobs stores a large number of blobs from a digest-to-blob map. It's intended for use on the
@@ -115,7 +118,8 @@ func (c *Client) WriteBlobs(ctx context.Context, blobs map[digest.Digest][]byte)
 	for _, blob := range blobs {
 		chunkers = append(chunkers, chunker.NewFromBlob(blob, int(c.ChunkMaxSize)))
 	}
-	return c.UploadIfMissing(ctx, chunkers...)
+	_, err := c.UploadIfMissing(ctx, chunkers...)
+	return err
 }
 
 // WriteProto marshals and writes a proto.
@@ -577,8 +581,31 @@ func (c *Client) FlattenActionOutputs(ctx context.Context, ar *repb.ActionResult
 	return outs, nil
 }
 
+// DownloadDirectory downloads the entire directory of given digest.
+func (c *Client) DownloadDirectory(ctx context.Context, d digest.Digest, execRoot string, cache filemetadata.Cache) (map[string]*tree.Output, error) {
+	dir := &repb.Directory{}
+	if err := c.ReadProto(ctx, d, dir); err != nil {
+		return nil, fmt.Errorf("digest %v cannot be mapped to a directory proto: %v", d, err)
+	}
+
+	dirs, err := c.GetDirectoryTree(ctx, d.ToProto())
+	if err != nil {
+		return nil, err
+	}
+
+	outputs, err := tree.FlattenTree(&repb.Tree{
+		Root:     dir,
+		Children: dirs,
+	}, "")
+	if err != nil {
+		return nil, err
+	}
+
+	return outputs, c.downloadOutputs(ctx, outputs, execRoot, cache)
+}
+
 // DownloadActionOutputs downloads the output files and directories in the given action result.
-func (c *Client) DownloadActionOutputs(ctx context.Context, resPb *repb.ActionResult, execRoot string) error {
+func (c *Client) DownloadActionOutputs(ctx context.Context, resPb *repb.ActionResult, execRoot string, cache filemetadata.Cache) error {
 	outs, err := c.FlattenActionOutputs(ctx, resPb)
 	if err != nil {
 		return err
@@ -589,17 +616,21 @@ func (c *Client) DownloadActionOutputs(ctx context.Context, resPb *repb.ActionRe
 			return err
 		}
 	}
+	return c.downloadOutputs(ctx, outs, execRoot, cache)
+}
+
+func (c *Client) downloadOutputs(ctx context.Context, outs map[string]*tree.Output, execRoot string, cache filemetadata.Cache) error {
 	var symlinks, copies []*tree.Output
 	downloads := make(map[digest.Digest]*tree.Output)
 	for _, out := range outs {
 		path := filepath.Join(execRoot, out.Path)
 		if out.IsEmptyDirectory {
-			if err := os.MkdirAll(path, os.FileMode(0777)); err != nil {
+			if err := os.MkdirAll(path, c.DirMode); err != nil {
 				return err
 			}
 			continue
 		}
-		if err := os.MkdirAll(filepath.Dir(path), os.FileMode(0777)); err != nil {
+		if err := os.MkdirAll(filepath.Dir(path), c.DirMode); err != nil {
 			return err
 		}
 		// We create the symbolic links after all regular downloads are finished, because dangling
@@ -614,11 +645,29 @@ func (c *Client) DownloadActionOutputs(ctx context.Context, resPb *repb.ActionRe
 			downloads[out.Digest] = out
 		}
 	}
-	if err := c.downloadFiles(ctx, execRoot, downloads); err != nil {
+	if err := c.DownloadFiles(ctx, execRoot, downloads); err != nil {
 		return err
 	}
+	for _, output := range downloads {
+		path := output.Path
+		md := &filemetadata.Metadata{
+			Digest:       output.Digest,
+			IsExecutable: output.IsExecutable,
+		}
+		if err := cache.Update(path, md); err != nil {
+			return err
+		}
+	}
 	for _, out := range copies {
-		if err := copyFile(execRoot, downloads[out.Digest].Path, out.Path); err != nil {
+		perm := c.RegularMode
+		if out.IsExecutable {
+			perm = c.ExecutableMode
+		}
+		src := downloads[out.Digest]
+		if src.IsEmptyDirectory {
+			return fmt.Errorf("unexpected empty directory: %s", src.Path)
+		}
+		if err := copyFile(execRoot, src.Path, out.Path, perm); err != nil {
 			return err
 		}
 	}
@@ -630,17 +679,8 @@ func (c *Client) DownloadActionOutputs(ctx context.Context, resPb *repb.ActionRe
 	return nil
 }
 
-func copyFile(execRoot, from, to string) error {
+func copyFile(execRoot, from, to string, mode os.FileMode) error {
 	src := filepath.Join(execRoot, from)
-	st, err := os.Stat(src)
-	if err != nil {
-		return err
-	}
-
-	if !st.Mode().IsRegular() {
-		return fmt.Errorf("%s is not a regular file", src)
-	}
-
 	s, err := os.Open(src)
 	if err != nil {
 		return err
@@ -648,7 +688,7 @@ func copyFile(execRoot, from, to string) error {
 	defer s.Close()
 
 	dst := filepath.Join(execRoot, to)
-	t, err := os.OpenFile(dst, os.O_RDWR|os.O_CREATE, st.Mode())
+	t, err := os.OpenFile(dst, os.O_RDWR|os.O_CREATE, mode)
 	if err != nil {
 		return err
 	}
@@ -657,7 +697,8 @@ func copyFile(execRoot, from, to string) error {
 	return err
 }
 
-func (c *Client) downloadFiles(ctx context.Context, execRoot string, outputs map[digest.Digest]*tree.Output) error {
+// DownloadFiles downloads the output files under |execRoot|.
+func (c *Client) DownloadFiles(ctx context.Context, execRoot string, outputs map[digest.Digest]*tree.Output) error {
 	if cap(c.casDownloaders) <= 0 {
 		return fmt.Errorf("CASConcurrency should be at least 1")
 	}
@@ -699,9 +740,9 @@ func (c *Client) downloadFiles(ctx context.Context, execRoot string, outputs map
 				}
 				for dg, data := range bchMap {
 					out := outputs[dg]
-					perm := os.FileMode(0644)
+					perm := c.RegularMode
 					if out.IsExecutable {
-						perm = os.FileMode(0777)
+						perm = c.ExecutableMode
 					}
 					if err := ioutil.WriteFile(filepath.Join(execRoot, out.Path), data, perm); err != nil {
 						return err
@@ -715,7 +756,7 @@ func (c *Client) downloadFiles(ctx context.Context, execRoot string, outputs map
 					return err
 				}
 				if out.IsExecutable {
-					if err := os.Chmod(path, os.FileMode(0777)); err != nil {
+					if err := os.Chmod(path, c.ExecutableMode); err != nil {
 						return err
 					}
 				}

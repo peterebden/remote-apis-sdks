@@ -5,6 +5,7 @@ import (
 	"context"
 	"flag"
 
+	"github.com/bazelbuild/remote-apis-sdks/go/pkg/balancer"
 	"github.com/bazelbuild/remote-apis-sdks/go/pkg/client"
 )
 
@@ -35,16 +36,30 @@ var (
 	// Instance gives the instance of remote execution to test (in
 	// projects/[PROJECT_ID]/instances/[INSTANCE_NAME] format for Google RBE).
 	Instance = flag.String("instance", "", "The instance ID to target when calling remote execution via gRPC (e.g., projects/$PROJECT/instances/default_instance for Google RBE).")
+	// CASConcurrency specifies the maximum number of concurrent upload & download RPCs that can be in flight.
+	CASConcurrency = flag.Int("cas_concurrency", client.DefaultCASConcurrency, "Num concurrent upload / download RPCs that the SDK is allowed to do.")
+	// MaxConcurrentRequests denotes the maximum number of concurrent RPCs on a single gRPC connection.
+	MaxConcurrentRequests = flag.Uint("max_concurrent_requests_per_conn", client.DefaultMaxConcurrentRequests, "Maximum number of concurrent RPCs on a single gRPC connection.")
+	// MaxConcurrentStreams denotes the maximum number of concurrent stream RPCs on a single gRPC connection.
+	MaxConcurrentStreams = flag.Uint("max_concurrent_streams_per_conn", client.DefaultMaxConcurrentStreams, "Maximum number of concurrent stream RPCs on a single gRPC connection.")
 )
+
+func init() {
+	// MinConnections denotes the minimum number of gRPC sub-connections the gRPC balancer should create during SDK initialization.
+	flag.IntVar(&balancer.MinConnections, "min_grpc_connections", balancer.DefaultMinConnections, "Minimum number of gRPC sub-connections the gRPC balancer should create during SDK initialization.")
+}
 
 // NewClientFromFlags connects to a remote execution service and returns a client suitable for higher-level
 // functionality. It uses the flags from above to configure the connection to remote execution.
 func NewClientFromFlags(ctx context.Context, opts ...client.Opt) (*client.Client, error) {
+	opts = append(opts, client.CASConcurrency(*CASConcurrency))
 	return client.NewClient(ctx, *Instance, client.DialParams{
 		Service:               *Service,
 		CASService:            *CASService,
 		CredFile:              *CredFile,
 		UseApplicationDefault: *UseApplicationDefaultCreds,
 		UseComputeEngine:      *UseGCECredentials,
+		MaxConcurrentRequests: uint32(*MaxConcurrentRequests),
+		MaxConcurrentStreams:  uint32(*MaxConcurrentStreams),
 	}, opts...)
 }
