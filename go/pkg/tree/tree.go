@@ -82,8 +82,10 @@ func loadFiles(execRoot string, excl []*command.InputExclusion, path string, fs 
 		return nil
 	}
 	if t == command.FileInputType {
+		ch := chunker.NewFromFile(absPath, meta.Digest, chunkSize)
+		ch.Compressor = meta.Compressor
 		fs[path] = &fileNode{
-			Chunker:      chunker.NewFromFile(absPath, meta.Digest, chunkSize),
+			Chunker:      ch,
 			IsExecutable: meta.IsExecutable,
 		}
 		return nil

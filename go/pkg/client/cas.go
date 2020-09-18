@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"sync"
 
 	"github.com/bazelbuild/remote-apis-sdks/go/pkg/chunker"
@@ -88,7 +89,7 @@ func (c *Client) UploadIfMissing(ctx context.Context, data ...*chunker.Chunker) 
 				log.V(3).Infof("Uploading single blob with digest %s", batch[0])
 				ch := chunkers[batch[0]]
 				dg := ch.Digest()
-				if err := c.WriteChunked(eCtx, c.ResourceNameWrite(dg.Hash, dg.Size), ch); err != nil {
+				if err := c.WriteChunked(eCtx, c.CompressedResourceNameWrite(dg.Hash, dg.Size, ch.Compressor), ch); err != nil {
 					return err
 				}
 			}
@@ -504,6 +505,16 @@ func (c *Client) resourceNameRead(hash string, sizeBytes int64) string {
 // ResourceNameWrite generates a valid write resource name.
 func (c *Client) ResourceNameWrite(hash string, sizeBytes int64) string {
 	return fmt.Sprintf("%s/uploads/%s/blobs/%s/%d", c.InstanceName, uuid.New(), hash, sizeBytes)
+}
+
+// CompressedResourceNameWrite generates a valid write resource name for a compressed blob.
+// If the IDENTITY method is provided it will generate an uncompressed write name.
+func (c *Client) CompressedResourceNameWrite(hash string, sizeBytes int64, compressionMethod repb.Compressor_Value) string {
+	if compressionMethod == repb.Compressor_IDENTITY {
+		return c.ResourceNameWrite(hash, sizeBytes)
+	}
+	name := strings.ToLower(compressionMethod.String())
+	return fmt.Sprintf("%s/uploads/%s/compressed-blobs/%s/%s/%d", c.InstanceName, uuid.New(), name, hash, sizeBytes)
 }
 
 // GetDirectoryTree returns the entire directory tree rooted at the given digest (which must target

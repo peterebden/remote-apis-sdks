@@ -11,6 +11,8 @@ import (
 
 	"github.com/bazelbuild/remote-apis-sdks/go/pkg/digest"
 	"github.com/golang/protobuf/proto"
+
+	repb "github.com/bazelbuild/remote-apis/build/bazel/remote/execution/v2"
 )
 
 // DefaultChunkSize is the default chunk size for ByteStream.Write RPCs.
@@ -25,8 +27,11 @@ var ErrEOF = errors.New("ErrEOF")
 // Chunker can be used to chunk an input into uploadable-size byte slices.
 // A single Chunker is NOT thread-safe; it should be used by a single uploader thread.
 type Chunker struct {
-	chunkSize int
-	reader    *bufio.Reader
+	// The compression method to use when uploading this chunk (unless one is passed explicitly
+	// via some other form).
+	Compressor repb.Compressor_Value
+	chunkSize  int
+	reader     *bufio.Reader
 	// An optional cache of the full data. It will be present in these cases:
 	// * The Chunker was initialized from a []byte.
 	// * Chunker.FullData was called at least once.

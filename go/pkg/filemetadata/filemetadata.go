@@ -6,6 +6,8 @@ import (
 	"os"
 
 	"github.com/bazelbuild/remote-apis-sdks/go/pkg/digest"
+
+	repb "github.com/bazelbuild/remote-apis/build/bazel/remote/execution/v2"
 )
 
 // SymlinkMetadata contains details if the given path is a symlink.
@@ -20,6 +22,7 @@ type Metadata struct {
 	IsExecutable bool
 	Err          error
 	Symlink      *SymlinkMetadata
+	Compressor   repb.Compressor_Value
 }
 
 // FileError is the error returned by the Compute function.
