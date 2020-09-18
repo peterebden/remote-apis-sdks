@@ -63,3 +63,7 @@ require (
 	google.golang.org/grpc v1.31.1
 	gopkg.in/yaml.v1 v1.0.0-20140924161607-9f9df34309c0 // indirect
 )
+
+replace (
+	 github.com/bazelbuild/remote-apis v0.0.0-20200904140912-1aeb39973178 => github.com/peterebden/remote-apis v0.0.0-20200917083919-6381217ebb0a
+)
