@@ -362,7 +362,7 @@ func ComputeOutputsToUpload(execRoot string, paths []string, chunkSize int, cach
 			return nil, nil, meta.Err
 		}
 		if e.IsNotFound {
-			return nil, nil, fmt.Errorf("Missing output path %s", path)
+			continue // Ignore missing outputs.
 		}
 		if !e.IsDirectory {
 			return nil, nil, meta.Err
