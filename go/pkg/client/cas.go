@@ -134,9 +134,15 @@ func (c *Client) WriteProto(ctx context.Context, msg proto.Message) (digest.Dige
 
 // WriteBlob uploads a blob to the CAS.
 func (c *Client) WriteBlob(ctx context.Context, blob []byte) (digest.Digest, error) {
+	return c.WriteCompressedBlob(ctx, blob, repb.Compressor_IDENTITY)
+}
+
+// WriteCompressedBlob uploads a blob to the CAS with a given compressor.
+func (c *Client) WriteCompressedBlob(ctx context.Context, blob []byte, compressor repb.Compressor_Value) (digest.Digest, error) {
 	ch := chunker.NewFromBlob(blob, int(c.ChunkMaxSize))
+	ch.Compressor = compressor
 	dg := ch.Digest()
-	return dg, c.WriteChunked(ctx, c.ResourceNameWrite(dg.Hash, dg.Size), ch)
+	return dg, c.WriteChunked(ctx, c.CompressedResourceNameWrite(dg.Hash, dg.Size, compressor), ch)
 }
 
 // BatchWriteBlobs uploads a number of blobs to the CAS. They must collectively be below the
