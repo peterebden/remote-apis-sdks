@@ -384,18 +384,22 @@ func (c *Client) readBlob(ctx context.Context, hash string, sizeBytes, offset, l
 // ReadBlobToFile fetches a blob with a provided digest name from the CAS, saving it into a file.
 // It returns the number of bytes read.
 func (c *Client) ReadBlobToFile(ctx context.Context, d digest.Digest, fpath string) (int64, error) {
-	return c.readBlobToFile(ctx, d.Hash, d.Size, fpath)
+	n, err := c.readBlobToFile(ctx, d.Hash, d.Size, fpath, repb.Compressor_IDENTITY)
+	if n != d.Size {
+		return n, fmt.Errorf("CAS fetch read %d bytes but %d were expected", n, d.Size)
+	}
+	return n, err
 }
 
-func (c *Client) readBlobToFile(ctx context.Context, hash string, sizeBytes int64, fpath string) (int64, error) {
-	n, err := c.readToFile(ctx, c.resourceNameRead(hash, sizeBytes), fpath)
-	if err != nil {
-		return n, err
-	}
-	if n != sizeBytes {
-		return n, fmt.Errorf("CAS fetch read %d bytes but %d were expected", n, sizeBytes)
-	}
-	return n, nil
+// ReadCompressedBlobToFile fetches a blob with a provided digest name from the CAS, saving it into a file.
+// It uses the given compression method (or none if IDENTITY is given).
+// It returns the number of bytes read (which in general will be less than the size of the digest).
+func (c *Client) ReadCompressedBlobToFile(ctx context.Context, d digest.Digest, fpath string, compressor repb.Compressor_Value) (int64, error) {
+	return c.readBlobToFile(ctx, d.Hash, d.Size, fpath, compressor)
+}
+
+func (c *Client) readBlobToFile(ctx context.Context, hash string, sizeBytes int64, fpath string, compressor repb.Compressor_Value) (int64, error) {
+	return c.readToFile(ctx, c.CompressedResourceNameRead(hash, sizeBytes, compressor), fpath, compressor)
 }
 
 // ReadBlobStreamed fetches a blob with a provided digest from the CAS.
@@ -409,7 +413,7 @@ func (c *Client) readBlobStreamed(ctx context.Context, hash string, sizeBytes, o
 		// Do not download empty blobs.
 		return 0, nil
 	}
-	n, err := c.readStreamed(ctx, c.resourceNameRead(hash, sizeBytes), offset, limit, w)
+	n, err := c.readStreamed(ctx, c.resourceNameRead(hash, sizeBytes), offset, limit, w, repb.Compressor_IDENTITY)
 	if err != nil {
 		return n, err
 	}
@@ -500,6 +504,16 @@ func (c *Client) MissingBlobs(ctx context.Context, ds []digest.Digest) ([]digest
 
 func (c *Client) resourceNameRead(hash string, sizeBytes int64) string {
 	return fmt.Sprintf("%s/blobs/%s/%d", c.InstanceName, hash, sizeBytes)
+}
+
+// CompressedResourceNameRead generates a valid read resource name for a compressed blob.
+// If the IDENTITY method is provided it will generate an uncompressed read name.
+func (c *Client) CompressedResourceNameRead(hash string, sizeBytes int64, compressionMethod repb.Compressor_Value) string {
+	if compressionMethod == repb.Compressor_IDENTITY {
+		return c.resourceNameRead(hash, sizeBytes)
+	}
+	name := strings.ToLower(compressionMethod.String())
+	return fmt.Sprintf("%s/compressed-blobs/%s/%s/%d", c.InstanceName, name, hash, sizeBytes)
 }
 
 // ResourceNameWrite generates a valid write resource name.
