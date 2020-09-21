@@ -123,7 +123,8 @@ func (c *Client) DownloadDirectory(ctx context.Context, rootDigest, path string)
 		return err
 	}
 	log.Infof("Downloading input root %v to %v.", dg, path)
-	return c.GrpcClient.DownloadDirectory(ctx, dg, path, filemetadata.NewNoopCache())
+	_, err = c.GrpcClient.DownloadDirectory(ctx, dg, path, filemetadata.NewNoopCache())
+	return err
 }
 
 // ShowAction parses and displays an action with its corresponding command.
