@@ -7,8 +7,10 @@ import (
 	"io"
 	"os"
 
+	"github.com/DataDog/zstd"
 	"github.com/bazelbuild/remote-apis-sdks/go/pkg/chunker"
 
+	repb "github.com/bazelbuild/remote-apis/build/bazel/remote/execution/v2"
 	log "github.com/golang/glog"
 	bspb "google.golang.org/genproto/googleapis/bytestream"
 )
@@ -32,21 +34,25 @@ func (c *Client) WriteChunked(ctx context.Context, name string, ch *chunker.Chun
 		if err != nil {
 			return err
 		}
+		bsw := &bswriter{
+			stream: stream,
+			name:   name,
+		}
+		var w io.Writer = bsw
+		if ch.Compressor == repb.Compressor_ZSTD {
+			w = zstd.NewWriter(w)
+		} else if ch.Compressor != repb.Compressor_IDENTITY {
+			return fmt.Errorf("unknown compressor %s", ch.Compressor)
+		}
 		for ch.HasNext() {
-			req := &bspb.WriteRequest{}
 			chunk, err := ch.Next()
 			if err != nil {
 				return err
 			}
-			if chunk.Offset == 0 {
-				req.ResourceName = name
-			}
-			req.WriteOffset = chunk.Offset
-			req.Data = chunk.Data
 			if !ch.HasNext() {
-				req.FinishWrite = true
+				bsw.finish = true
 			}
-			err = stream.Send(req)
+			_, err = w.Write(chunk.Data)
 			if err == io.EOF {
 				break
 			}
@@ -60,6 +66,30 @@ func (c *Client) WriteChunked(ctx context.Context, name string, ch *chunker.Chun
 		return nil
 	}
 	return c.Retrier.Do(cancelCtx, closure)
+}
+
+// A bswriter wraps up a bytestream client into an io.Writer.
+type bswriter struct {
+	stream bspb.ByteStream_WriteClient
+	name   string
+	offset int64
+	finish bool
+}
+
+func (w *bswriter) Write(p []byte) (int, error) {
+	req := &bspb.WriteRequest{
+		WriteOffset: w.offset,
+		Data:        p,
+		FinishWrite: w.finish,
+	}
+	if w.offset == 0 {
+		req.ResourceName = w.name
+	}
+	if err := w.stream.Send(req); err != nil {
+		return 0, err
+	}
+	w.offset += int64(len(p))
+	return len(p), nil
 }
 
 // ReadBytes fetches a resource's contents into a byte slice.
