@@ -506,6 +506,9 @@ func (c *Client) WriteProto(ctx context.Context, msg proto.Message) (digest.Dige
 
 // WriteBlob uploads a blob to the CAS.
 func (c *Client) WriteBlob(ctx context.Context, blob []byte) (digest.Digest, error) {
+	if len(blob) == 0 {
+		return digest.Empty, nil // The empty blob does not need to be uploaded
+	}
 	ue := uploadinfo.EntryFromBlob(blob)
 	dg := ue.Digest
 	ch, err := chunker.New(ue, c.shouldCompress(dg.Size), int(c.ChunkMaxSize))
@@ -1000,6 +1003,9 @@ func (c *Client) ResourceNameCompressedWrite(hash string, sizeBytes int64) strin
 // GetDirectoryTree returns the entire directory tree rooted at the given digest (which must target
 // a Directory stored in the CAS).
 func (c *Client) GetDirectoryTree(ctx context.Context, d *repb.Digest) (result []*repb.Directory, err error) {
+	if d.SizeBytes == 0 && d.Hash == digest.Empty.Hash {
+		return nil, nil
+	}
 	pageTok := ""
 	result = []*repb.Directory{}
 	closure := func(ctx context.Context) error {
