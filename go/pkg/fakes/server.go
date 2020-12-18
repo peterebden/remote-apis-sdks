@@ -44,7 +44,7 @@ func NewServer(t *testing.T) (s *Server, err error) {
 	cas := NewCAS()
 	ac := NewActionCache()
 	s = &Server{Exec: NewExec(t, ac, cas), CAS: cas, ActionCache: ac}
-	s.listener, err = net.Listen("tcp", ":0")
+	s.listener, err = net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		return nil, err
 	}
