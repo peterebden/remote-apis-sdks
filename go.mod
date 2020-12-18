@@ -2,6 +2,8 @@ module github.com/bazelbuild/remote-apis-sdks
 
 go 1.13
 
+replace github.com/bazelbuild/remote-apis => github.com/peterebden/remote-apis v0.0.0-20201218092846-5306a2d66a1b
+
 require (
 	github.com/aclements/go-gg v0.0.0-20170323211221-abd1f791f5ee // indirect
 	github.com/aclements/go-moremath v0.0.0-20190830160640-d16893ddf098 // indirect
