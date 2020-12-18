@@ -644,7 +644,7 @@ func (c *Client) BatchDownloadCompressedBlobs(ctx context.Context, dgs []digest.
 			continue
 		}
 		sz += int64(dg.Size)
-		if compression[i] != repb.Compressor_IDENTITY {
+		if compression[i] == repb.Compressor_IDENTITY {
 			req.Digests = append(req.Digests, dg.ToProto())
 		} else {
 			req.Requests = append(req.Requests, &repb.BatchReadBlobsRequest_Request{
