@@ -528,8 +528,8 @@ func (c *Client) WriteBlob(ctx context.Context, blob []byte) (digest.Digest, err
 
 // maybeCompressReadBlob will, depending on the client configuration, set the blobs to be
 // read compressed. It returns the appropriate resource name.
-func (c *Client) maybeCompressReadBlob(hash string, sizeBytes int64, w io.WriteCloser) (string, io.WriteCloser, chan error, error) {
-	if !c.shouldCompress(sizeBytes) {
+func (c *Client) maybeCompressReadBlob(hash string, sizeBytes int64, allowCompression bool, w io.WriteCloser) (string, io.WriteCloser, chan error, error) {
+	if !allowCompression || !c.shouldCompress(sizeBytes) {
 		// If we aren't compressing the data, theere's nothing to wait on.
 		dummyDone := make(chan error, 1)
 		dummyDone <- nil
@@ -626,19 +626,32 @@ func (c *Client) batchWriteBlobs(ctx context.Context, blobs []blob) error {
 // computed in advance by the caller. In case multiple errors occur during the blob read, the
 // last error will be returned.
 func (c *Client) BatchDownloadBlobs(ctx context.Context, dgs []digest.Digest) (map[digest.Digest][]byte, error) {
+	return c.BatchDownloadCompressedBlobs(ctx, dgs, make([]repb.Compressor_Value, len(dgs)))
+}
+
+// BatchDownloadCompressedBlobs is like BatchDownloadBlobs but allows specifying compression on each blob.
+// The blobs returned are all in their uncompressed form.
+func (c *Client) BatchDownloadCompressedBlobs(ctx context.Context, dgs []digest.Digest, compression []repb.Compressor_Value) (map[digest.Digest][]byte, error) {
 	if len(dgs) > int(c.MaxBatchDigests) {
 		return nil, fmt.Errorf("batch read of %d total blobs exceeds maximum of %d", len(dgs), c.MaxBatchDigests)
 	}
 	req := &repb.BatchReadBlobsRequest{InstanceName: c.InstanceName}
 	var sz int64
 	foundEmpty := false
-	for _, dg := range dgs {
+	for i, dg := range dgs {
 		if dg.Size == 0 {
 			foundEmpty = true
 			continue
 		}
 		sz += int64(dg.Size)
-		req.Digests = append(req.Digests, dg.ToProto())
+		if compression[i] != repb.Compressor_IDENTITY {
+			req.Digests = append(req.Digests, dg.ToProto())
+		} else {
+			req.Requests = append(req.Requests, &repb.BatchReadBlobsRequest_Request{
+				Digest: dg.ToProto(),
+				Compressor: compression[i],
+			})
+		}
 	}
 	if sz > int64(c.MaxBatchSize) {
 		return nil, fmt.Errorf("batch read of %d total bytes exceeds maximum of %d", sz, c.MaxBatchSize)
@@ -676,6 +689,17 @@ func (c *Client) BatchDownloadBlobs(ctx context.Context, dgs []digest.Digest) (m
 				errDg = r.Digest
 				errMsg = r.Status.Message
 			} else {
+				if r.Compressor != repb.Compressor_IDENTITY {
+					data, err := c.fullDecompressor.DecodeAll(r.Data, make([]byte, 0, r.Digest.SizeBytes))
+					if err != nil {
+						failedDgs = append(failedDgs, r.Digest)
+						allRetriable = false  // decompression errors are never retriable
+						errDg = r.Digest
+						errMsg = err.Error()
+						continue
+					}
+					r.Data = data
+				}
 				res[digest.NewFromProtoUnvalidated(r.Digest)] = r.Data
 			}
 		}
@@ -799,23 +823,28 @@ func (c *Client) readBlob(ctx context.Context, hash string, sizeBytes, offset, l
 	}
 	sz += bytes.MinRead // Pad size so bytes.Buffer does not reallocate.
 	buf := bytes.NewBuffer(make([]byte, 0, sz))
-	_, err := c.readBlobStreamed(ctx, hash, sizeBytes, offset, limit, buf)
+	_, err := c.readBlobStreamed(ctx, hash, sizeBytes, offset, limit, buf, true)
 	return buf.Bytes(), err
 }
 
 // ReadBlobToFile fetches a blob with a provided digest name from the CAS, saving it into a file.
 // It returns the number of bytes read.
 func (c *Client) ReadBlobToFile(ctx context.Context, d digest.Digest, fpath string) (int64, error) {
-	return c.readBlobToFile(ctx, d.Hash, d.Size, fpath)
+	return c.readBlobToFile(ctx, d.Hash, d.Size, fpath, true)
 }
 
-func (c *Client) readBlobToFile(ctx context.Context, hash string, sizeBytes int64, fpath string) (int64, error) {
+// ReadBlobToFileUncompressed is like ReadBlobToFile but disallows using compression.
+func (c *Client) ReadBlobToFileUncompressed(ctx context.Context, d digest.Digest, fpath string) (int64, error) {
+	return c.readBlobToFile(ctx, d.Hash, d.Size, fpath, false)
+}
+
+func (c *Client) readBlobToFile(ctx context.Context, hash string, sizeBytes int64, fpath string, allowCompression bool) (int64, error) {
 	f, err := os.OpenFile(fpath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, c.RegularMode)
 	if err != nil {
 		return 0, err
 	}
 	defer f.Close()
-	return c.readBlobStreamed(ctx, hash, sizeBytes, 0, 0, f)
+	return c.readBlobStreamed(ctx, hash, sizeBytes, 0, 0, f, allowCompression)
 }
 
 // NewCompressedWriteBuffer creates wraps a io.Writer contained compressed contents to write
@@ -848,7 +877,7 @@ func NewCompressedWriteBuffer(w io.WriteCloser) (io.WriteCloser, chan error, err
 // ReadBlobStreamed fetches a blob with a provided digest from the CAS.
 // It streams into an io.Writer, and returns the number of bytes read.
 func (c *Client) ReadBlobStreamed(ctx context.Context, d digest.Digest, w io.Writer) (int64, error) {
-	return c.readBlobStreamed(ctx, d.Hash, d.Size, 0, 0, w)
+	return c.readBlobStreamed(ctx, d.Hash, d.Size, 0, 0, w, true)
 }
 
 type writerTracker struct {
@@ -886,13 +915,13 @@ func (wt *writerTracker) Close() error {
 	return nil
 }
 
-func (c *Client) readBlobStreamed(ctx context.Context, hash string, sizeBytes, offset, limit int64, w io.Writer) (int64, error) {
+func (c *Client) readBlobStreamed(ctx context.Context, hash string, sizeBytes, offset, limit int64, w io.Writer, allowCompression bool) (int64, error) {
 	if sizeBytes == 0 {
 		// Do not download empty blobs.
 		return 0, nil
 	}
 	wt := newWriteTracker(w)
-	name, wc, done, err := c.maybeCompressReadBlob(hash, sizeBytes, wt)
+	name, wc, done, err := c.maybeCompressReadBlob(hash, sizeBytes, allowCompression, wt)
 	if err != nil {
 		return 0, err
 	}

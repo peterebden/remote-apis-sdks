@@ -25,6 +25,7 @@ import (
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/oauth"
 	"google.golang.org/grpc/status"
+	"github.com/klauspost/compress/zstd"
 
 	configpb "github.com/bazelbuild/remote-apis-sdks/go/pkg/balancer/proto"
 	regrpc "github.com/bazelbuild/remote-apis/build/bazel/remote/execution/v2"
@@ -112,6 +113,7 @@ type Client struct {
 	casDownloadRequests chan *downloadRequest
 	rpcTimeouts         RPCTimeouts
 	creds               credentials.PerRPCCredentials
+	fullDecompressor    *zstd.Decoder
 }
 
 const (
@@ -576,6 +578,10 @@ func NewClient(ctx context.Context, instanceName string, params DialParams, opts
 	if err != nil {
 		return nil, err
 	}
+	decoder, err := zstd.NewReader(nil)
+	if err != nil {
+		return nil, err
+	}
 	client := &Client{
 		InstanceName:                  instanceName,
 		actionCache:                   regrpc.NewActionCacheClient(casConn),
@@ -599,6 +605,7 @@ func NewClient(ctx context.Context, instanceName string, params DialParams, opts
 		casUploaders:                  semaphore.NewWeighted(DefaultCASConcurrency),
 		casDownloaders:                semaphore.NewWeighted(DefaultCASConcurrency),
 		casUploads:                    make(map[digest.Digest]*uploadState),
+		fullDecompressor:              decoder,
 		UnifiedUploadTickDuration:     DefaultUnifiedUploadTickDuration,
 		UnifiedUploadBufferSize:       DefaultUnifiedUploadBufferSize,
 		UnifiedDownloadTickDuration:   DefaultUnifiedDownloadTickDuration,
