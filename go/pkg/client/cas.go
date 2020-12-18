@@ -274,9 +274,9 @@ func (c *Client) upload(reqs []*uploadRequest) {
 			}
 			if len(batch) > 1 {
 				LogContextInfof(ctx, log.Level(3), "Uploading batch of %d blobs", len(batch))
-				blobs := make([]blob, len(batch))
+				blobs := make([]blob, 0, len(batch))
 				totalBytesMap := make(map[digest.Digest]int64)
-				for i, dg := range batch {
+				for _, dg := range batch {
 					st := newStates[dg]
 					ch, err := chunker.New(st.ue, st.ue.IsCompressed(), int(c.ChunkMaxSize))
 					if err != nil {
@@ -288,7 +288,7 @@ func (c *Client) upload(reqs []*uploadRequest) {
 						updateAndNotify(st, 0, err, true)
 						continue
 					}
-					blobs[i] = blob{Digest: dg, Data: data, Comp: st.ue.Compressor}
+					blobs = append(blobs, blob{Digest: dg, Data: data, Comp: st.ue.Compressor})
 					totalBytesMap[dg] = int64(len(data))
 				}
 				err := c.batchWriteBlobs(ctx, blobs)
@@ -365,7 +365,7 @@ func (c *Client) uploadNonUnified(ctx context.Context, data ...*uploadinfo.Entry
 			if len(batch) > 1 {
 				LogContextInfof(ctx, log.Level(3), "Uploading batch of %d blobs", len(batch))
 				blobs := make([]blob, len(batch))
-				for _, dg := range batch {
+				for i, dg := range batch {
 					ue := ueList[dg]
 					ch, err := chunker.New(ue, ue.IsCompressed(), int(c.ChunkMaxSize))
 					if err != nil {
@@ -376,7 +376,7 @@ func (c *Client) uploadNonUnified(ctx context.Context, data ...*uploadinfo.Entry
 					if err != nil {
 						return err
 					}
-					blobs = append(blobs, blob{Digest: dg, Data: data, Comp: ue.Compressor})
+					blobs[i] = blob{Digest: dg, Data: data, Comp: ue.Compressor}
 					atomic.AddInt64(&totalBytesTransferred, int64(len(data)))
 				}
 				if err := c.batchWriteBlobs(eCtx, blobs); err != nil {
