@@ -512,12 +512,21 @@ func (c *Client) WriteProto(ctx context.Context, msg proto.Message) (digest.Dige
 
 // WriteBlob uploads a blob to the CAS.
 func (c *Client) WriteBlob(ctx context.Context, blob []byte) (digest.Digest, error) {
+	return c.writeBlob(ctx, blob, true)
+}
+
+// WriteBlobUncompressed writes a blob to the CAS without compressing it.
+func (c *Client) WriteBlobUncompressed(ctx context.Context, blob []byte) (digest.Digest, error) {
+	return c.writeBlob(ctx, blob, false)
+}
+
+func (c *Client) writeBlob(ctx context.Context, blob []byte, allowCompression bool) (digest.Digest, error) {
 	if len(blob) == 0 {
 		return digest.Empty, nil // The empty blob does not need to be uploaded
 	}
 	ue := uploadinfo.EntryFromBlob(blob)
 	dg := ue.Digest
-	compress := c.shouldCompress(dg.Size)
+	compress := allowCompression && c.shouldCompress(dg.Size)
 	ch, err := chunker.New(ue, compress, int(c.ChunkMaxSize))
 	if err != nil {
 		return dg, err
