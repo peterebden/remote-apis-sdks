@@ -36,6 +36,11 @@ func (ue *Entry) IsFile() bool {
 	return ue.ueType == uePath
 }
 
+// IsCompressed returns true if this entry should be compressed.
+func (ue *Entry) IsCompressed() bool {
+	return ue.Compressor != repb.Compressor_IDENTITY
+}
+
 // EntryFromBlob creates an Entry from an in memory blob.
 func EntryFromBlob(blob []byte) *Entry {
 	return &Entry{

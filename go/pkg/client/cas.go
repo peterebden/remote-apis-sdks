@@ -69,6 +69,12 @@ type uploadState struct {
 	cancel  func()
 }
 
+type blob struct {
+	Digest digest.Digest
+	Data []byte
+	Comp repb.Compressor_Value
+}
+
 func (c *Client) findBlobState(ctx context.Context, dgs []digest.Digest) (missing []digest.Digest, present []digest.Digest, err error) {
 	dgMap := make(map[digest.Digest]bool)
 	for _, d := range dgs {
@@ -268,11 +274,11 @@ func (c *Client) upload(reqs []*uploadRequest) {
 			}
 			if len(batch) > 1 {
 				LogContextInfof(ctx, log.Level(3), "Uploading batch of %d blobs", len(batch))
-				bchMap := make(map[digest.Digest][]byte)
+				blobs := make([]blob, len(batch))
 				totalBytesMap := make(map[digest.Digest]int64)
-				for _, dg := range batch {
+				for i, dg := range batch {
 					st := newStates[dg]
-					ch, err := chunker.New(st.ue, false, int(c.ChunkMaxSize))
+					ch, err := chunker.New(st.ue, st.ue.IsCompressed(), int(c.ChunkMaxSize))
 					if err != nil {
 						updateAndNotify(st, 0, err, true)
 						continue
@@ -282,12 +288,12 @@ func (c *Client) upload(reqs []*uploadRequest) {
 						updateAndNotify(st, 0, err, true)
 						continue
 					}
-					bchMap[dg] = data
+					blobs[i] = blob{Digest: dg, Data: data, Comp: st.ue.Compressor}
 					totalBytesMap[dg] = int64(len(data))
 				}
-				err := c.BatchWriteBlobs(ctx, bchMap)
-				for dg := range bchMap {
-					updateAndNotify(newStates[dg], totalBytesMap[dg], err, true)
+				err := c.batchWriteBlobs(ctx, blobs)
+				for _, blob := range blobs {
+					updateAndNotify(newStates[blob.Digest], totalBytesMap[blob.Digest], err, true)
 				}
 			} else {
 				LogContextInfof(ctx, log.Level(3), "Uploading single blob with digest %s", batch[0])
@@ -303,11 +309,11 @@ func (c *Client) upload(reqs []*uploadRequest) {
 				st.mu.Unlock()
 				dg := st.ue.Digest
 				log.V(3).Infof("Uploading single blob with digest %s", batch[0])
-				ch, err := chunker.New(st.ue, c.shouldCompress(dg.Size), int(c.ChunkMaxSize))
+				ch, err := chunker.New(st.ue, st.ue.IsCompressed(), int(c.ChunkMaxSize))
 				if err != nil {
 					updateAndNotify(st, 0, err, true)
 				}
-				totalBytes, err := c.writeChunked(cCtx, c.writeRscName(dg), ch)
+				totalBytes, err := c.writeChunked(cCtx, c.writeRscName(dg, st.ue.IsCompressed()), ch)
 				updateAndNotify(st, totalBytes, err, true)
 			}
 		}()
@@ -358,10 +364,10 @@ func (c *Client) uploadNonUnified(ctx context.Context, data ...*uploadinfo.Entry
 			}
 			if len(batch) > 1 {
 				LogContextInfof(ctx, log.Level(3), "Uploading batch of %d blobs", len(batch))
-				bchMap := make(map[digest.Digest][]byte)
+				blobs := make([]blob, len(batch))
 				for _, dg := range batch {
 					ue := ueList[dg]
-					ch, err := chunker.New(ue, false, int(c.ChunkMaxSize))
+					ch, err := chunker.New(ue, ue.IsCompressed(), int(c.ChunkMaxSize))
 					if err != nil {
 						return err
 					}
@@ -370,21 +376,21 @@ func (c *Client) uploadNonUnified(ctx context.Context, data ...*uploadinfo.Entry
 					if err != nil {
 						return err
 					}
-					bchMap[dg] = data
+					blobs = append(blobs, blob{Digest: dg, Data: data, Comp: ue.Compressor})
 					atomic.AddInt64(&totalBytesTransferred, int64(len(data)))
 				}
-				if err := c.BatchWriteBlobs(eCtx, bchMap); err != nil {
+				if err := c.batchWriteBlobs(eCtx, blobs); err != nil {
 					return err
 				}
 			} else {
 				LogContextInfof(ctx, log.Level(3), "Uploading single blob with digest %s", batch[0])
 				ue := ueList[batch[0]]
 				dg := ue.Digest
-				ch, err := chunker.New(ue, c.shouldCompress(dg.Size), int(c.ChunkMaxSize))
+				ch, err := chunker.New(ue, ue.IsCompressed(), int(c.ChunkMaxSize))
 				if err != nil {
 					return err
 				}
-				written, err := c.writeChunked(eCtx, c.writeRscName(dg), ch)
+				written, err := c.writeChunked(eCtx, c.writeRscName(dg, ue.IsCompressed()), ch)
 				if err != nil {
 					return err
 				}
@@ -511,11 +517,12 @@ func (c *Client) WriteBlob(ctx context.Context, blob []byte) (digest.Digest, err
 	}
 	ue := uploadinfo.EntryFromBlob(blob)
 	dg := ue.Digest
-	ch, err := chunker.New(ue, c.shouldCompress(dg.Size), int(c.ChunkMaxSize))
+	compress := c.shouldCompress(dg.Size)
+	ch, err := chunker.New(ue, compress, int(c.ChunkMaxSize))
 	if err != nil {
 		return dg, err
 	}
-	_, err = c.writeChunked(ctx, c.writeRscName(dg), ch)
+	_, err = c.writeChunked(ctx, c.writeRscName(dg, compress), ch)
 	return dg, err
 }
 
@@ -540,14 +547,28 @@ func (c *Client) maybeCompressReadBlob(hash string, sizeBytes int64, w io.WriteC
 // computed in advance by the caller. In case multiple errors occur during the blob upload, the
 // last error will be returned.
 func (c *Client) BatchWriteBlobs(ctx context.Context, blobs map[digest.Digest][]byte) error {
+	b := make([]blob, 0, len(blobs))
+	for dg, data := range blobs {
+		b = append(b, blob{Digest: dg, Data: data})
+	}
+	return c.batchWriteBlobs(ctx, b)
+}
+
+// batchWriteBlobs is similar to BatchWriteBlobs but allows more control over how blobs are uploaded
+// (e.g. whether they are compressed or not).
+func (c *Client) batchWriteBlobs(ctx context.Context, blobs []blob) error {
 	var reqs []*repb.BatchUpdateBlobsRequest_Request
+	m := map[digest.Digest]*repb.BatchUpdateBlobsRequest_Request{}
 	var sz int64
-	for k, b := range blobs {
-		sz += int64(k.Size)
-		reqs = append(reqs, &repb.BatchUpdateBlobsRequest_Request{
-			Digest: k.ToProto(),
-			Data:   b,
-		})
+	for _, b := range blobs {
+		sz += int64(b.Digest.Size)
+		req := &repb.BatchUpdateBlobsRequest_Request{
+			Digest: b.Digest.ToProto(),
+			Data:   b.Data,
+			Compressor: b.Comp,
+		}
+		reqs = append(reqs, req)
+		m[b.Digest] = req
 	}
 	if sz > int64(c.MaxBatchSize) {
 		return fmt.Errorf("batch update of %d total bytes exceeds maximum of %d", sz, c.MaxBatchSize)
@@ -578,10 +599,7 @@ func (c *Client) BatchWriteBlobs(ctx context.Context, blobs map[digest.Digest][]
 			if st.Code() != codes.OK {
 				e := st.Err()
 				if c.Retrier.ShouldRetry(e) {
-					failedReqs = append(failedReqs, &repb.BatchUpdateBlobsRequest_Request{
-						Digest: r.Digest,
-						Data:   blobs[digest.NewFromProtoUnvalidated(r.Digest)],
-					})
+					failedReqs = append(failedReqs, m[digest.NewFromProtoUnvalidated(r.Digest)])
 					retriableError = e
 				} else {
 					allRetriable = false
@@ -1529,8 +1547,8 @@ func (c *Client) shouldCompress(sizeBytes int64) bool {
 	return int64(c.CompressedBytestreamThreshold) >= 0 && int64(c.CompressedBytestreamThreshold) <= sizeBytes
 }
 
-func (c *Client) writeRscName(dg digest.Digest) string {
-	if c.shouldCompress(dg.Size) {
+func (c *Client) writeRscName(dg digest.Digest, compressed bool) string {
+	if compressed {
 		return c.ResourceNameCompressedWrite(dg.Hash, dg.Size)
 	}
 	return c.ResourceNameWrite(dg.Hash, dg.Size)
