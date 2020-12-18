@@ -3,6 +3,7 @@
 package uploadinfo
 
 import (
+	repb "github.com/bazelbuild/remote-apis/build/bazel/remote/execution/v2"
 	"github.com/bazelbuild/remote-apis-sdks/go/pkg/digest"
 	"github.com/golang/protobuf/proto"
 )
@@ -12,13 +13,15 @@ const (
 	uePath
 )
 
-// Entry should remain immutable upon creation.
+// Entry should remain immutable upon creation, apart from the Compressor field.
 // Should be created using constructor. Only Contents or Path must be set.
 // In case of a malformed entry, Contents takes precedence over Path.
 type Entry struct {
 	Digest   digest.Digest
 	Contents []byte
 	Path     string
+	// The compression method that should be used to upload this blob.
+	Compressor repb.Compressor_Value
 
 	ueType int
 }
