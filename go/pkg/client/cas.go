@@ -705,6 +705,7 @@ func (c *Client) BatchDownloadCompressedBlobs(ctx context.Context, dgs []digest.
 						allRetriable = false  // decompression errors are never retriable
 						errDg = r.Digest
 						errMsg = err.Error()
+						numErrs++
 						continue
 					}
 					r.Data = data
