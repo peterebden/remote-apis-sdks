@@ -30,10 +30,11 @@ var (
 		{Name: "bar", Digest: barDgPb},
 		{Name: "foo", Digest: fooDgPb, IsExecutable: true},
 	}}
+	bazDir    = &repb.Directory{Symlinks: []*repb.SymlinkNode{{Name: "baz", Target: "../../../b/a/fooDir"}}}
 
-	fooDirBlob, barDirBlob, foobarDirBlob = mustMarshal(fooDir), mustMarshal(barDir), mustMarshal(foobarDir)
-	fooDirDg, barDirDg, foobarDirDg       = digest.NewFromBlob(fooDirBlob), digest.NewFromBlob(barDirBlob), digest.NewFromBlob(foobarDirBlob)
-	fooDirDgPb, barDirDgPb, foobarDirDgPb = fooDirDg.ToProto(), barDirDg.ToProto(), foobarDirDg.ToProto()
+	fooDirBlob, barDirBlob, foobarDirBlob, bazDirBlob = mustMarshal(fooDir), mustMarshal(barDir), mustMarshal(foobarDir), mustMarshal(bazDir)
+	fooDirDg, barDirDg, foobarDirDg, bazDirDg       = digest.NewFromBlob(fooDirBlob), digest.NewFromBlob(barDirBlob), digest.NewFromBlob(foobarDirBlob), digest.NewFromBlob(bazDirBlob)
+	fooDirDgPb, barDirDgPb, foobarDirDgPb, bazDirDgPb = fooDirDg.ToProto(), barDirDg.ToProto(), foobarDirDg.ToProto(), bazDirDg.ToProto()
 )
 
 func mustMarshal(p proto.Message) []byte {
@@ -1474,6 +1475,22 @@ func TestComputeOutputsToUploadDirectories(t *testing.T) {
 				"a/b/fooDir/dir1/foo": 1,
 				"a/b/fooDir/dir2":     1,
 				"a/b/fooDir/dir2/foo": 1,
+			},
+		},
+		{
+			desc: "Symlinks to an input",
+			input: []*inputPath{
+				{path: "a/b/fooDir/link", isSymlink: true, symlinkTarget: "../../../b/a/fooDir"},
+				{path: "b/a/fooDir/dir2/foo", fileContents: fooBlob, isExecutable: true},
+			},
+			wantBlobs: [][]byte{bazDirBlob},
+			wantTreeRoot: &repb.Directory{Directories: []*repb.DirectoryNode{
+				{Name: "baz", Digest: bazDirDgPb},
+			}},
+			wantTreeChildren: []*repb.Directory{bazDir},
+			wantCacheCalls: map[string]int{
+				"baz":      2,
+				"baz/link": 1,
 			},
 		},
 	}
