@@ -89,8 +89,8 @@ func shouldIgnore(inp string, t command.InputType, excl []*command.InputExclusio
 
 // getTargetRelPath returns the part of the target relative to the symlink's
 // directory, iff the target is under execRoot. Otherwise it returns an error.
-func getTargetRelPath(execRoot, symlinkNormDir, target string) (string, error) {
-	symlinkAbsDir := filepath.Clean(filepath.Join(execRoot, symlinkNormDir))
+func getTargetRelPath(execRoot, localRoot, symlinkNormDir, target string) (string, error) {
+	symlinkAbsDir := filepath.Clean(filepath.Join(localRoot, symlinkNormDir))
 	if !filepath.IsAbs(target) {
 		target = filepath.Clean(filepath.Join(symlinkAbsDir, target))
 	}
@@ -102,7 +102,7 @@ func getTargetRelPath(execRoot, symlinkNormDir, target string) (string, error) {
 
 // preprocessSymlink returns two things: if the routine should continue, and if
 // there is an error to be reported back.
-func preprocessSymlink(execRoot, symlinkNormDir string, meta *filemetadata.SymlinkMetadata, opts *TreeSymlinkOpts) (bool, error) {
+func preprocessSymlink(execRoot, localRoot, symlinkNormDir string, meta *filemetadata.SymlinkMetadata, opts *TreeSymlinkOpts) (bool, error) {
 	if meta.IsDangling {
 		// For now, we do not treat a dangling symlink as an error. In the case
 		// where the symlink is not preserved (i.e. needs to be converted to a
@@ -115,7 +115,7 @@ func preprocessSymlink(execRoot, symlinkNormDir string, meta *filemetadata.Symli
 		return true, nil
 	}
 
-	if _, err := getTargetRelPath(execRoot, symlinkNormDir, meta.Target); err != nil {
+	if _, err := getTargetRelPath(execRoot, localRoot, symlinkNormDir, meta.Target); err != nil {
 		return false, err
 	}
 	return true, nil
@@ -123,12 +123,12 @@ func preprocessSymlink(execRoot, symlinkNormDir string, meta *filemetadata.Symli
 
 // loadFiles reads all files specified by the given InputSpec (descending into subdirectories
 // recursively), and loads their contents into the provided map.
-func loadFiles(execRoot string, excl []*command.InputExclusion, path string, fs map[string]*fileSysNode, cache filemetadata.Cache, opts *TreeSymlinkOpts) error {
+func loadFiles(execRoot, localRoot string, excl []*command.InputExclusion, path string, fs map[string]*fileSysNode, cache filemetadata.Cache, opts *TreeSymlinkOpts) error {
 	if opts == nil {
 		opts = DefaultTreeSymlinkOpts()
 	}
-	absPath := filepath.Clean(filepath.Join(execRoot, path))
-	normPath, err := getRelPath(execRoot, absPath)
+	absPath := filepath.Clean(filepath.Join(localRoot, path))
+	normPath, err := getRelPath(localRoot, absPath)
 	if err != nil {
 		return err
 	}
@@ -137,7 +137,7 @@ func loadFiles(execRoot string, excl []*command.InputExclusion, path string, fs 
 	symlinkNormDir := ""
 	if isSymlink {
 		symlinkNormDir = filepath.Dir(normPath)
-		cont, err := preprocessSymlink(execRoot, symlinkNormDir, meta.Symlink, opts)
+		cont, err := preprocessSymlink(execRoot, localRoot, symlinkNormDir, meta.Symlink, opts)
 		if err != nil {
 			return err
 		}
@@ -167,7 +167,7 @@ func loadFiles(execRoot string, excl []*command.InputExclusion, path string, fs 
 		}
 		return nil
 	} else if t == command.SymlinkInputType {
-		relTarget, err := getTargetRelPath(execRoot, symlinkNormDir, meta.Symlink.Target)
+		relTarget, err := getTargetRelPath(execRoot, localRoot, symlinkNormDir, meta.Symlink.Target)
 		if err != nil {
 			return err
 		}
@@ -181,7 +181,7 @@ func loadFiles(execRoot string, excl []*command.InputExclusion, path string, fs 
 		if meta.Symlink.IsDangling || !opts.FollowsTarget {
 			return nil
 		}
-		return loadFiles(execRoot, excl, filepath.Clean(filepath.Join(symlinkNormDir, relTarget)), fs, cache, opts)
+		return loadFiles(execRoot, localRoot, excl, filepath.Clean(filepath.Join(symlinkNormDir, relTarget)), fs, cache, opts)
 	}
 	// Directory
 	files, err := ioutil.ReadDir(absPath)
@@ -194,7 +194,7 @@ func loadFiles(execRoot string, excl []*command.InputExclusion, path string, fs 
 		return nil
 	}
 	for _, f := range files {
-		if e := loadFiles(execRoot, excl, filepath.Join(normPath, f.Name()), fs, cache, opts); e != nil {
+		if e := loadFiles(execRoot, localRoot, excl, filepath.Join(normPath, f.Name()), fs, cache, opts); e != nil {
 			return e
 		}
 	}
@@ -230,7 +230,7 @@ func (c *Client) ComputeMerkleTree(execRoot string, is *command.InputSpec, cache
 		if i == "" {
 			return digest.Empty, nil, nil, errors.New("empty Input, use \".\" for entire exec root")
 		}
-		if e := loadFiles(execRoot, is.InputExclusions, i, fs, cache, c.TreeSymlinkOpts); e != nil {
+		if e := loadFiles(execRoot, execRoot, is.InputExclusions, i, fs, cache, c.TreeSymlinkOpts); e != nil {
 			return digest.Empty, nil, nil, e
 		}
 	}
@@ -489,7 +489,7 @@ func (c *Client) ComputeOutputsToUpload(execRoot string, paths []string, cache f
 		}
 		// A directory.
 		fs := make(map[string]*fileSysNode)
-		if e := loadFiles(execRoot, nil, "", fs, cache, c.TreeSymlinkOpts); e != nil {
+		if e := loadFiles(execRoot, absPath, nil, "", fs, cache, c.TreeSymlinkOpts); e != nil {
 			return nil, nil, e
 		}
 		ft := buildTree(fs)
