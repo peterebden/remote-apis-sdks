@@ -489,7 +489,7 @@ func (c *Client) ComputeOutputsToUpload(execRoot string, paths []string, cache f
 		}
 		// A directory.
 		fs := make(map[string]*fileSysNode)
-		if e := loadFiles(absPath, nil, "", fs, cache, c.TreeSymlinkOpts); e != nil {
+		if e := loadFiles(execRoot, nil, "", fs, cache, c.TreeSymlinkOpts); e != nil {
 			return nil, nil, e
 		}
 		ft := buildTree(fs)
