@@ -36,10 +36,10 @@ const (
 	SymlinkInputType
 )
 
-var inputTypes = [...]string{"UnspecifiedInputType", "DirectoryInputType", "FileInputType"}
+var inputTypes = [...]string{"UnspecifiedInputType", "DirectoryInputType", "FileInputType", "SymlinkInputType"}
 
 func (s InputType) String() string {
-	if UnspecifiedInputType <= s && s <= FileInputType {
+	if UnspecifiedInputType <= s && s <= SymlinkInputType {
 		return inputTypes[s]
 	}
 	return fmt.Sprintf("InvalidInputType(%d)", s)
