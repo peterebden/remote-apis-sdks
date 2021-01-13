@@ -450,6 +450,12 @@ func packageDirectories(t *treeNode) (root *repb.Directory, children map[digest.
 		files[dg] = fn.ue
 	}
 	sort.Slice(root.Files, func(i, j int) bool { return root.Files[i].Name < root.Files[j].Name })
+
+	for name, sym := range t.symlinks {
+		root.Symlinks = append(root.Symlinks, &repb.SymlinkNode{Name: name, Target: sym.target})
+	}
+	sort.Slice(root.Symlinks, func(i, j int) bool { return root.Symlinks[i].Name < root.Symlinks[j].Name })
+
 	return root, children, files, nil
 }
 
