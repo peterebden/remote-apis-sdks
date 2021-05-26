@@ -2,18 +2,24 @@
 package client
 
 import (
+	"archive/tar"
+	"bytes"
 	"errors"
 	"fmt"
+	"io"
 	"io/ioutil"
+	"os"
 	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/bazelbuild/remote-apis-sdks/go/pkg/command"
 	"github.com/bazelbuild/remote-apis-sdks/go/pkg/digest"
 	"github.com/bazelbuild/remote-apis-sdks/go/pkg/filemetadata"
 	"github.com/bazelbuild/remote-apis-sdks/go/pkg/uploadinfo"
+	"github.com/klauspost/compress/zstd"
 
 	repb "github.com/bazelbuild/remote-apis/build/bazel/remote/execution/v2"
 )
@@ -505,6 +511,20 @@ func (c *Client) ComputeOutputsToUpload(execRoot string, paths []string, cache f
 		if err != nil {
 			return nil, nil, err
 		}
+		if c.PackName != "" {
+			pack, err := c.buildPack(filepath.Join(execRoot, path), "", rootDir, childDirs, files)
+			if err != nil {
+				return nil, nil, err
+			}
+			ue := uploadinfo.EntryFromBlob(pack)
+			outs[ue.Digest] = ue
+			rootDir.NodeProperties = &repb.NodeProperties{
+				Properties: []*repb.NodeProperty{{
+					Name:  c.PackName,
+					Value: fmt.Sprintf("%s/%d", ue.Digest.Hash, ue.Digest.Size),
+				}},
+			}
+		}
 		ue, err := uploadinfo.EntryFromProto(rootDir)
 		if err != nil {
 			return nil, nil, err
@@ -532,4 +552,97 @@ func (c *Client) ComputeOutputsToUpload(execRoot string, paths []string, cache f
 		}
 	}
 	return outs, resPb, nil
+}
+
+// buildPack builds a tarball pack for an output directory from the given information.
+// TODO(peterebden): At some point we might want to change this to not keep the whole thing in mem.
+func (c *Client) buildPack(outRoot, prefix string, root *repb.Directory, children map[digest.Digest]*repb.Directory, files map[digest.Digest]*uploadinfo.Entry) ([]byte, error) {
+	var buf bytes.Buffer
+	zw, err := zstd.NewWriter(&buf, zstd.WithEncoderLevel(zstd.SpeedBetterCompression))
+	if err != nil {
+		return nil, err
+	}
+	tw := tar.NewWriter(zw)
+	if err := c.packDir(tw, outRoot, prefix, root, children, files); err != nil {
+		return nil, err
+	} else if err := tw.Close(); err != nil {
+		return nil, err
+	} else if err := zw.Close(); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
+}
+
+func (c *Client) packDir(tw *tar.Writer, outRoot, path string, root *repb.Directory, children map[digest.Digest]*repb.Directory, files map[digest.Digest]*uploadinfo.Entry) error {
+	for _, sym := range root.Symlinks {
+		hdr := tarHeader(path, sym.Name, false)
+		hdr.Typeflag = tar.TypeSymlink
+		hdr.Linkname = sym.Target
+		if err := tw.WriteHeader(hdr); err != nil {
+			return err
+		}
+	}
+	for _, file := range root.Files {
+		if err := c.packFile(tw, outRoot, path, file); err != nil {
+			return err
+		}
+	}
+	for _, dir := range root.Directories {
+		hdr := tarHeader(path, dir.Name+"/", true)
+		hdr.Typeflag = tar.TypeDir
+		hdr.Mode |= int64(os.ModeDir) | 0220
+		if err := tw.WriteHeader(hdr); err != nil {
+			return err
+		}
+		child, present := children[digest.NewFromProtoUnvalidated(dir.Digest)]
+		if !present {
+			return fmt.Errorf("Missing child directory %s", dir.Digest.Hash)
+		}
+		if err := c.packDir(tw, outRoot, hdr.Name, child, children, files); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (c *Client) packFile(tw *tar.Writer, outRoot, path string, file *repb.FileNode) error {
+	hdr := tarHeader(path, file.Name, file.IsExecutable)
+	hdr.Typeflag = tar.TypeReg
+	f, err := os.Open(filepath.Join(outRoot, hdr.Name))
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	if info, err := f.Stat(); err != nil {
+		return err
+	} else if info.Size() != file.Digest.SizeBytes {
+		return fmt.Errorf("Mismatching file sizes: %d vs. %d", info.Size(), file.Digest.SizeBytes)
+	}
+	hdr.Size = file.Digest.SizeBytes
+	if err := tw.WriteHeader(hdr); err != nil {
+		return err
+	}
+	_, err = io.Copy(tw, f)
+	return err
+}
+
+// tarHeader constructs a tar header with most of the fields initialised.
+func tarHeader(dir, name string, isExecutable bool) *tar.Header {
+	var mode int64 = 0444
+	if isExecutable {
+		mode |= 0111
+	}
+	var mtime = time.Date(2000, time.January, 1, 0, 0, 0, 0, time.UTC)
+	const nobody = 65534
+	return &tar.Header{
+		Name:       filepath.Join(dir, name),
+		Mode:       mode,
+		ModTime:    mtime,
+		AccessTime: mtime,
+		ChangeTime: mtime,
+		Uid:        nobody,
+		Gid:        nobody,
+		Uname:      "nobody",
+		Gname:      "nobody",
+	}
 }

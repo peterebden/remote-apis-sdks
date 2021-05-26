@@ -18,6 +18,7 @@ import (
 	"github.com/bazelbuild/remote-apis-sdks/go/pkg/chunker"
 	"github.com/bazelbuild/remote-apis-sdks/go/pkg/digest"
 	"github.com/bazelbuild/remote-apis-sdks/go/pkg/retry"
+	"github.com/klauspost/compress/zstd"
 	"golang.org/x/oauth2"
 	"golang.org/x/sync/semaphore"
 	"google.golang.org/grpc"
@@ -25,7 +26,6 @@ import (
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/oauth"
 	"google.golang.org/grpc/status"
-	"github.com/klauspost/compress/zstd"
 
 	configpb "github.com/bazelbuild/remote-apis-sdks/go/pkg/balancer/proto"
 	regrpc "github.com/bazelbuild/remote-apis/build/bazel/remote/execution/v2"
@@ -101,6 +101,8 @@ type Client struct {
 	UnifiedDownloadBufferSize UnifiedDownloadBufferSize
 	// UnifiedDownloadTickDuration specifies how often the unified download daemon flushes the pending requests.
 	UnifiedDownloadTickDuration UnifiedDownloadTickDuration
+	// PackName defines the node property name that the client will create and upload 'packs' as.
+	PackName string
 	// TreeSymlinkOpts controls how symlinks are handled when constructing a tree.
 	TreeSymlinkOpts     *TreeSymlinkOpts
 	serverCaps          *repb.ServerCapabilities
@@ -360,6 +362,21 @@ type PerRPCCreds struct {
 // Apply saves the per-RPC creds in the Client.
 func (p *PerRPCCreds) Apply(c *Client) {
 	c.creds = p.Creds
+}
+
+// PackName defines the node property name that the client will create and upload 'packs' as
+// for output directories. These are tarballs containing a complete form of that tree which
+// can be downloaded to short-circuit fetching a potentially large tree of files.
+type PackName struct {
+	Name string
+}
+
+func (p *PackName) Apply(c *Client) {
+	c.PackName = p.Name
+}
+
+func UsePackName(name string) *PackName {
+	return &PackName{Name: name}
 }
 
 func getImpersonatedRPCCreds(ctx context.Context, actAs string, cred credentials.PerRPCCredentials) credentials.PerRPCCredentials {
