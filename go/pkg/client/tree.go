@@ -518,6 +518,11 @@ func (c *Client) ComputeOutputsToUpload(execRoot string, paths []string, cache f
 			}
 			ue := uploadinfo.EntryFromBlob(pack)
 			outs[ue.Digest] = ue
+			// bit of a hack until we fully handle node properties correctly; also push
+			// a copy without that field.
+			ue2, _ := uploadinfo.EntryFromProto(rootDir)
+			outs[ue2.Digest] = ue2
+			// now add to the root itself
 			rootDir.NodeProperties = &repb.NodeProperties{
 				Properties: []*repb.NodeProperty{{
 					Name:  c.PackName,
