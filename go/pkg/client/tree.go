@@ -536,8 +536,15 @@ func (c *Client) ComputeOutputsToUpload(execRoot string, paths []string, cache f
 		}
 		outs[ue.Digest] = ue
 		treePb.Root = rootDir
-		for _, c := range childDirs {
-			treePb.Children = append(treePb.Children, c)
+		childDigests := make([]digest.Digest, 0, len(childDirs))
+		for d := range childDirs {
+			childDigests = append(childDigests, d)
+		}
+		sort.Slice(childDigests, func(i, j int) bool {
+			return childDigests[i].Hash < childDigests[j].Hash
+		})
+		for _, dg := range childDigests {
+			treePb.Children = append(treePb.Children, childDirs[dg])
 		}
 		ue, err = uploadinfo.EntryFromProto(treePb)
 		if err != nil {
