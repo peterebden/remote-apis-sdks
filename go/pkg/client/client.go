@@ -18,7 +18,6 @@ import (
 	"github.com/bazelbuild/remote-apis-sdks/go/pkg/chunker"
 	"github.com/bazelbuild/remote-apis-sdks/go/pkg/digest"
 	"github.com/bazelbuild/remote-apis-sdks/go/pkg/retry"
-	"github.com/klauspost/compress/zstd"
 	"github.com/pkg/errors"
 	"golang.org/x/oauth2"
 	"golang.org/x/sync/semaphore"

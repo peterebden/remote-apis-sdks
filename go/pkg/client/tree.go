@@ -4,10 +4,8 @@ package client
 import (
 	"archive/tar"
 	"bytes"
-	"errors"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -589,7 +587,7 @@ func (c *Client) ComputeOutputsToUpload(execRoot, workingDir string, paths []str
 			return nil, nil, err
 		}
 		if c.PackName != "" {
-			pack, err := c.buildPack(filepath.Join(execRoot, path), "", rootDir, childDirs, files)
+			pack, err := c.buildPack(filepath.Join(execRoot, path), "", rootDir, treePb.Children, files)
 			if err != nil {
 				return nil, nil, err
 			}
@@ -635,14 +633,20 @@ func (c *Client) ComputeOutputsToUpload(execRoot, workingDir string, paths []str
 
 // buildPack builds a tarball pack for an output directory from the given information.
 // TODO(peterebden): At some point we might want to change this to not keep the whole thing in mem.
-func (c *Client) buildPack(outRoot, prefix string, root *repb.Directory, children map[digest.Digest]*repb.Directory, files map[digest.Digest]*uploadinfo.Entry) ([]byte, error) {
+func (c *Client) buildPack(outRoot, prefix string, root *repb.Directory, children []*repb.Directory, files map[digest.Digest]*uploadinfo.Entry) ([]byte, error) {
+	m := make(map[digest.Digest]*repb.Directory, len(children))
+	for _, child := range children {
+		dg, _ := digest.NewFromMessage(child)
+		m[dg] = child
+	}
+
 	var buf bytes.Buffer
 	zw, err := zstd.NewWriter(&buf, zstd.WithEncoderLevel(zstd.SpeedBetterCompression))
 	if err != nil {
 		return nil, err
 	}
 	tw := tar.NewWriter(zw)
-	if err := c.packDir(tw, outRoot, prefix, root, children, files); err != nil {
+	if err := c.packDir(tw, outRoot, prefix, root, m, files); err != nil {
 		return nil, err
 	} else if err := tw.Close(); err != nil {
 		return nil, err
