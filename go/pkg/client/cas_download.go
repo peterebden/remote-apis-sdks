@@ -181,7 +181,7 @@ func (c *Client) DownloadDirectory(ctx context.Context, d digest.Digest, outDir 
 	return outputs, stats, err
 }
 
-var zstdDecoder, _ = zstd.NewReader(nil, zstd.WithDecoderConcurrency(0))
+var zstdDecoder, _ = zstd.NewReader(nil)
 
 // BatchDownloadBlobs downloads a number of blobs from the CAS to memory. They must collectively be below the
 // maximum total size for a batch read, which is about 4 MB (see MaxBatchSize). Digests must be
