@@ -5,6 +5,7 @@ import (
 	"archive/tar"
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -14,14 +15,12 @@ import (
 	"strings"
 	"time"
 
-	"errors"
 	cpb "github.com/bazelbuild/remote-apis-sdks/go/api/command"
 	"github.com/bazelbuild/remote-apis-sdks/go/pkg/command"
 	"github.com/bazelbuild/remote-apis-sdks/go/pkg/digest"
 	"github.com/bazelbuild/remote-apis-sdks/go/pkg/filemetadata"
 	"github.com/bazelbuild/remote-apis-sdks/go/pkg/uploadinfo"
 	"github.com/klauspost/compress/zstd"
-	"github.com/pkg/errors"
 
 	repb "github.com/bazelbuild/remote-apis/build/bazel/remote/execution/v2"
 	log "github.com/golang/glog"
@@ -147,7 +146,7 @@ func getTargetRelPath(execRoot, symlinkRelPath string, targetPath string) (relEx
 		targetPath = filepath.Join(symlinkAbsDir, targetPath)
 	}
 
-	relExecRoot, err = getRelPath(execRoot, targetPath)
+	relExecRoot, err = filepath.Rel(execRoot, targetPath)
 	if err != nil {
 		return "", "", err
 	}
