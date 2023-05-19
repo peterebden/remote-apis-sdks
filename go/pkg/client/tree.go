@@ -133,7 +133,7 @@ func getTargetRelPath(execRoot, path string, symMeta *filemetadata.SymlinkMetada
 		target = filepath.Join(symlinkAbsDir, target)
 	}
 
-	relExecRoot, err = getRelPath(execRoot, target)
+	relExecRoot, err = filepath.Rel(execRoot, target)
 	if err != nil {
 		return "", "", err
 	}
