@@ -1935,7 +1935,7 @@ func TestComputeOutputsToUploadFiles(t *testing.T) {
 			e, cleanup := fakes.NewTestEnv(t)
 			defer cleanup()
 
-			inputs, gotResult, err := e.Client.GrpcClient.ComputeOutputsToUpload(root, tc.wd, tc.paths, cache, command.UnspecifiedSymlinkBehavior, tc.nodeProperties)
+			inputs, gotResult, err := e.Client.GrpcClient.ComputeOutputsToUpload(root, tc.wd, tc.paths, cache, command.UnspecifiedSymlinkBehavior, repb.Command_TREE_ONLY, tc.nodeProperties)
 			if err != nil {
 				t.Errorf("ComputeOutputsToUpload(...) = gave error %v, want success", err)
 			}
@@ -2114,7 +2114,7 @@ func TestComputeOutputsToUploadDirectories(t *testing.T) {
 			e, cleanup := fakes.NewTestEnv(t)
 			defer cleanup()
 
-			inputs, gotResult, err := e.Client.GrpcClient.ComputeOutputsToUpload(root, "", []string{"a/b/fooDir"}, cache, command.UnspecifiedSymlinkBehavior, tc.nodeProperties)
+			inputs, gotResult, err := e.Client.GrpcClient.ComputeOutputsToUpload(root, "", []string{"a/b/fooDir"}, cache, command.UnspecifiedSymlinkBehavior, repb.Command_TREE_ONLY, tc.nodeProperties)
 			if err != nil {
 				t.Fatalf("ComputeOutputsToUpload(...) = gave error %v, want success", err)
 			}
@@ -2144,7 +2144,7 @@ func TestComputeOutputsToUploadDirectories(t *testing.T) {
 			digests[gotResult.OutputDirectories[0].TreeDigest.Hash] = true
 
 			for i := 0; i < 5; i++ {
-				_, gotResult, err = e.Client.GrpcClient.ComputeOutputsToUpload(root, "", []string{"a/b/fooDir"}, cache, command.UnspecifiedSymlinkBehavior, tc.nodeProperties)
+				_, gotResult, err = e.Client.GrpcClient.ComputeOutputsToUpload(root, "", []string{"a/b/fooDir"}, cache, command.UnspecifiedSymlinkBehavior, repb.Command_TREE_ONLY, tc.nodeProperties)
 				if err != nil {
 					t.Fatalf("ComputeOutputsToUpload(...) = gave error %v, want success", err)
 				}
@@ -2229,7 +2229,7 @@ func TestComputeOutputsToUploadFileNoPermissions(t *testing.T) {
 	e, cleanup := fakes.NewTestEnv(t)
 	defer cleanup()
 
-	inputs, gotResult, err := e.Client.GrpcClient.ComputeOutputsToUpload(root, wd, paths, cache, command.UnspecifiedSymlinkBehavior, nodeProperties)
+	inputs, gotResult, err := e.Client.GrpcClient.ComputeOutputsToUpload(root, wd, paths, cache, command.UnspecifiedSymlinkBehavior, repb.Command_TREE_ONLY, nodeProperties)
 	if err != nil {
 		t.Errorf("ComputeOutputsToUpload(...) = gave error %v, want success", err)
 	}

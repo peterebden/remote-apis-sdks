@@ -712,7 +712,7 @@ func packageDirectories(t *treeNode) (root *repb.Directory, files map[digest.Dig
 // ComputeOutputsToUpload transforms the provided local output paths into uploadable Chunkers.
 // The paths have to be relative to execRoot.
 // It also populates the remote ActionResult, packaging output directories as trees where required.
-func (c *Client) ComputeOutputsToUpload(execRoot, workingDir string, paths []string, cache filemetadata.Cache, sb command.SymlinkBehaviorType, nodeProperties map[string]*cpb.NodeProperties) (map[digest.Digest]*uploadinfo.Entry, *repb.ActionResult, error) {
+func (c *Client) ComputeOutputsToUpload(execRoot, workingDir string, paths []string, cache filemetadata.Cache, sb command.SymlinkBehaviorType, odf repb.Command_OutputDirectoryFormat, nodeProperties map[string]*cpb.NodeProperties) (map[digest.Digest]*uploadinfo.Entry, *repb.ActionResult, error) {
 	outs := make(map[digest.Digest]*uploadinfo.Entry)
 	resPb := &repb.ActionResult{}
 	for _, path := range paths {
@@ -761,15 +761,6 @@ func (c *Client) ComputeOutputsToUpload(execRoot, workingDir string, paths []str
 		}
 		outs[ue.Digest] = ue
 		treePb.Root = rootDir
-		ue, err = uploadinfo.EntryFromProto(treePb)
-		if err != nil {
-			return nil, nil, err
-		}
-		outs[ue.Digest] = ue
-		for _, ue := range files {
-			outs[ue.Digest] = ue
-		}
-		resPb.OutputDirectories = append(resPb.OutputDirectories, &repb.OutputDirectory{Path: normPath, TreeDigest: ue.Digest.ToProto()})
 		// Upload the child directories individually as well
 		ueRoot, _ := uploadinfo.EntryFromProto(treePb.Root)
 		outs[ueRoot.Digest] = ueRoot
@@ -777,6 +768,24 @@ func (c *Client) ComputeOutputsToUpload(execRoot, workingDir string, paths []str
 			ueChild, _ := uploadinfo.EntryFromProto(child)
 			outs[ueChild.Digest] = ueChild
 		}
+		for _, ue := range files {
+			outs[ue.Digest] = ue
+		}
+		outDir := &repb.OutputDirectory{Path: normPath}
+
+		if odf == repb.Command_TREE_ONLY || odf == repb.Command_TREE_AND_DIRECTORY {
+			ue, err = uploadinfo.EntryFromProto(treePb)
+			if err != nil {
+				return nil, nil, err
+			}
+			outs[ue.Digest] = ue
+			outDir.TreeDigest = ue.Digest.ToProto()
+		}
+		if odf == repb.Command_DIRECTORY_ONLY || odf == repb.Command_TREE_AND_DIRECTORY {
+			// This is already uploaded above regardless of the output format
+			outDir.RootDirectoryDigest = ueRoot.Digest.ToProto()
+		}
+		resPb.OutputDirectories = append(resPb.OutputDirectories, outDir)
 	}
 	return outs, resPb, nil
 }
