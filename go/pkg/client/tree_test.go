@@ -1965,11 +1965,13 @@ func TestComputeOutputsToUploadDirectories(t *testing.T) {
 		desc           string
 		input          []*inputPath
 		nodeProperties map[string]*cpb.NodeProperties
+		outputDirFmt   repb.Command_OutputDirectoryFormat
 		// The blobs are everything else outside of the Tree proto itself.
 		wantBlobs        [][]byte
 		wantTreeRoot     *repb.Directory
 		wantTreeChildren []*repb.Directory
 		wantCacheCalls   map[string]int
+		wantOutputDir    *repb.Directory
 	}{
 		{
 			desc: "Two files",
@@ -2056,6 +2058,39 @@ func TestComputeOutputsToUploadDirectories(t *testing.T) {
 				"a/b/fooDir/dirB/dirE/bar": 1,
 			},
 		},
+		{
+			desc: "Output directory only",
+			input: []*inputPath{
+				{path: "a/b/fooDir/foo", fileContents: fooBlob, isExecutable: true},
+				{path: "a/b/fooDir/bar", fileContents: barBlob},
+			},
+			outputDirFmt:   repb.Command_DIRECTORY_ONLY,
+			nodeProperties: map[string]*cpb.NodeProperties{"foo": fooProperties},
+			wantBlobs:      [][]byte{fooBlob, barBlob},
+			wantOutputDir:  foobarDir,
+			wantCacheCalls: map[string]int{
+				"a/b/fooDir":     2,
+				"a/b/fooDir/bar": 1,
+				"a/b/fooDir/foo": 1,
+			},
+		},
+		{
+			desc: "Output directory and tree",
+			input: []*inputPath{
+				{path: "a/b/fooDir/foo", fileContents: fooBlob, isExecutable: true},
+				{path: "a/b/fooDir/bar", fileContents: barBlob},
+			},
+			outputDirFmt:   repb.Command_TREE_AND_DIRECTORY,
+			nodeProperties: map[string]*cpb.NodeProperties{"foo": fooProperties},
+			wantBlobs:      [][]byte{fooBlob, barBlob},
+			wantOutputDir:  foobarDir,
+			wantTreeRoot:   foobarDir,
+			wantCacheCalls: map[string]int{
+				"a/b/fooDir":     2,
+				"a/b/fooDir/bar": 1,
+				"a/b/fooDir/foo": 1,
+			},
+		},
 	}
 
 	for _, tc := range tests {
@@ -2075,7 +2110,7 @@ func TestComputeOutputsToUploadDirectories(t *testing.T) {
 			e, cleanup := fakes.NewTestEnv(t)
 			defer cleanup()
 
-			inputs, gotResult, err := e.Client.GrpcClient.ComputeOutputsToUpload(root, "", []string{"a/b/fooDir"}, cache, command.UnspecifiedSymlinkBehavior, repb.Command_TREE_ONLY, tc.nodeProperties)
+			inputs, gotResult, err := e.Client.GrpcClient.ComputeOutputsToUpload(root, "", []string{"a/b/fooDir"}, cache, command.UnspecifiedSymlinkBehavior, tc.outputDirFmt, tc.nodeProperties)
 			if err != nil {
 				t.Fatalf("ComputeOutputsToUpload(...) = gave error %v, want success", err)
 			}
@@ -2102,21 +2137,51 @@ func TestComputeOutputsToUploadDirectories(t *testing.T) {
 			}
 
 			digests := make(map[string]bool)
-			digests[gotResult.OutputDirectories[0].TreeDigest.Hash] = true
+			if dir.TreeDigest != nil {
+				digests[dir.TreeDigest.Hash] = true
+			}
+			if dir.RootDirectoryDigest != nil {
+				digests[dir.RootDirectoryDigest.Hash] = true
+			}
 
 			for i := 0; i < 5; i++ {
-				_, gotResult, err = e.Client.GrpcClient.ComputeOutputsToUpload(root, "", []string{"a/b/fooDir"}, cache, command.UnspecifiedSymlinkBehavior, repb.Command_TREE_ONLY, tc.nodeProperties)
+				_, gotResult, err = e.Client.GrpcClient.ComputeOutputsToUpload(root, "", []string{"a/b/fooDir"}, cache, command.UnspecifiedSymlinkBehavior, tc.outputDirFmt, tc.nodeProperties)
 				if err != nil {
 					t.Fatalf("ComputeOutputsToUpload(...) = gave error %v, want success", err)
 				}
-				digests[gotResult.OutputDirectories[0].TreeDigest.Hash] = true
+				if dg := gotResult.OutputDirectories[0].TreeDigest; dg != nil {
+					digests[dg.Hash] = true
+				}
+				if dg := gotResult.OutputDirectories[0].RootDirectoryDigest; dg != nil {
+					digests[dg.Hash] = true
+				}
 			}
-			if len(digests) != 1 {
+			expectedLength := 1
+			if tc.outputDirFmt == repb.Command_TREE_AND_DIRECTORY {
+				expectedLength = 2
+			}
+			if len(digests) != expectedLength {
 				dgList := []string{}
 				for d := range digests {
 					dgList = append(dgList, d)
 				}
 				t.Fatalf("ComputeOutputsToUpload(...) directory digests are not consistent got:%v", dgList)
+			}
+
+			if tc.wantOutputDir != nil {
+				dg := digest.NewFromProtoUnvalidated(dir.RootDirectoryDigest)
+				rootDirBlob, ok := gotBlobs[dg]
+				if !ok {
+					t.Fatalf("ComputeOutputsToUpload(...) output directory proto with digest %+v not uploaded", dg)
+				}
+				rootDir := &repb.Directory{}
+				proto.Unmarshal(rootDirBlob, rootDir)
+				if diff := cmp.Diff(tc.wantOutputDir, rootDir, cmp.Comparer(proto.Equal)); diff != "" {
+					t.Errorf("ComputeOutputsToUpload(...) gave diff (-want +got) on tree root:\n%s", diff)
+				}
+			}
+			if tc.wantTreeRoot == nil {
+				return
 			}
 
 			dg := digest.NewFromProtoUnvalidated(dir.TreeDigest)
