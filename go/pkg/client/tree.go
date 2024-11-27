@@ -772,12 +772,13 @@ func (c *Client) ComputeOutputsToUpload(execRoot, workingDir string, paths []str
 			ue2, _ := uploadinfo.EntryFromProto(rootDir)
 			outs[ue2.Digest] = ue2
 			// now add to the root itself
-			rootDir.NodeProperties = &repb.NodeProperties{
-				Properties: []*repb.NodeProperty{{
-					Name:  c.PackName,
-					Value: fmt.Sprintf("%s/%d", ue.Digest.Hash, ue.Digest.Size),
-				}},
+			if rootDir.NodeProperties == nil {
+				rootDir.NodeProperties = &repb.NodeProperties{}
 			}
+			rootDir.NodeProperties.Properties = append(rootDir.NodeProperties.Properties, &repb.NodeProperty{
+				Name:  c.PackName,
+				Value: fmt.Sprintf("%s/%d", ue.Digest.Hash, ue.Digest.Size),
+			})
 		}
 		ue, err := uploadinfo.EntryFromProto(rootDir)
 		if err != nil {
